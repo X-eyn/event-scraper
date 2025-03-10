@@ -13,6 +13,7 @@ load_dotenv()
 # Bot configuration
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')  # Get token from .env file
 NOTIFICATION_CHANNEL_ID = None  # This will be set with a command
+NOTIFICATION_ROLE_NAME = "genshit"  # Role to ping for deadline alerts
 CHECK_INTERVAL_HOURS = 12  # How often to check for approaching deadlines
 ALERT_DAYS_THRESHOLD = 3  # Alert when deadline is this many days away or less
 
@@ -139,45 +140,74 @@ async def set_alert_channel(ctx):
     NOTIFICATION_CHANNEL_ID = ctx.channel.id
     await ctx.send(f"✅ This channel has been set as the alert notification channel.")
 
-@tasks.loop(hours=CHECK_INTERVAL_HOURS)
-async def check_deadlines():
-    """Periodic task to check for approaching deadlines and send alerts."""
-    if NOTIFICATION_CHANNEL_ID is None:
+@bot.command(name='set_alert_role')
+@commands.has_permissions(administrator=True)
+async def set_alert_role(ctx, *, role_name):
+    """Set the role to be pinged for event deadline alerts."""
+    global NOTIFICATION_ROLE_NAME
+    
+    # Check if the role exists in the guild
+    role = discord.utils.get(ctx.guild.roles, name=role_name)
+    if not role:
+        await ctx.send(f"⚠️ Role '{role_name}' not found in this server. Please check the role name and try again.")
         return
+    
+    NOTIFICATION_ROLE_NAME = role_name
+    await ctx.send(f"✅ Role '{role_name}' will now be pinged for event deadline alerts.")
+
+@bot.command(name='test_alert')
+async def test_alert(ctx):
+    """Test command to simulate the deadline alert feature."""
+    # Use the current channel for the test
+    test_channel = ctx.channel
+    
+    # Find the notification role in the server
+    role = discord.utils.get(ctx.guild.roles, name=NOTIFICATION_ROLE_NAME)
+    
+    if not role:
+        await ctx.send(f"⚠️ Warning: Role '{NOTIFICATION_ROLE_NAME}' not found in this server. Creating a placeholder mention.")
+        role_mention = f"@{NOTIFICATION_ROLE_NAME}"
+    else:
+        # Use direct role ID for proper pinging
+        role_mention = f"<@&{role.id}>"
     
     events = get_formatted_events()
     approaching_deadlines = []
     
+    # For testing, consider all events as approaching deadline
     for event in events:
         days_left = get_days_remaining(event['end_date'])
-        if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
-            approaching_deadlines.append((event, days_left))
+        # For testing, we'll display all events regardless of days left
+        approaching_deadlines.append((event, days_left if days_left is not None else 0))
     
-    if approaching_deadlines and NOTIFICATION_CHANNEL_ID:
-        channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
-        if channel:
+    if approaching_deadlines:
+        # Show a message explaining the test
+        await ctx.send("**Testing Alert Feature**\nThe following messages demonstrate how deadline alerts will appear for each individual event:")
+        
+        # Send individual alerts for each event
+        for event, days_left in approaching_deadlines:
+            # First send the role ping as a separate message for guaranteed notification
+            ping_message = await test_channel.send(f"{role_mention}")
+            
             embed = discord.Embed(
-                title="⚠️ Approaching Event Deadlines ⚠️",
-                description="The following events are ending soon!",
+                title=f"⚠️ Event Ending Soon: {event['name']} ⚠️",
+                description=f"This event deadline is approaching!",
                 color=0xFF5555
             )
             
-            for event, days_left in approaching_deadlines:
-                name = event['name']
-                value = (
-                    f"**Type:** {event['type']}\n"
-                    f"**End Date:** {event['end_date']} "
-                    f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
-                    f"[More Info]({event['link']})"
-                )
-                embed.add_field(name=name, value=value, inline=False)
+            value = (
+                f"**Type:** {event['type']}\n"
+                f"**End Date:** {event['end_date']} "
+                f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
+                f"[More Info]({event['link']})"
+            )
+            embed.add_field(name="Event Details", value=value, inline=False)
             
-            await channel.send(embed=embed)
-
-@check_deadlines.before_loop
-async def before_check_deadlines():
-    """Wait until the bot is ready before starting the task loop."""
-    await bot.wait_until_ready()
+            await test_channel.send(embed=embed)
+            
+        await ctx.send("Alert test completed! The above messages show how individual deadline alerts will appear.")
+    else:
+        await ctx.send("No events found to display in the test alert.")
 
 @bot.command(name='help_events')
 async def help_events(ctx):
@@ -201,12 +231,78 @@ async def help_events(ctx):
     )
     
     embed.add_field(
+        name="!set_alert_role", 
+        value="Set which role to ping for deadline alerts, e.g., !set_alert_role genshit (Admin only)", 
+        inline=False
+    )
+    
+    embed.add_field(
+        name="!test_alert", 
+        value="Test the deadline alert feature in the current channel", 
+        inline=False
+    )
+    
+    embed.add_field(
         name="!help_events", 
         value="Display this help message", 
         inline=False
     )
     
     await ctx.send(embed=embed)
+
+@tasks.loop(hours=CHECK_INTERVAL_HOURS)
+async def check_deadlines():
+    """Periodic task to check for approaching deadlines and send alerts."""
+    if NOTIFICATION_CHANNEL_ID is None:
+        return
+    
+    events = get_formatted_events()
+    approaching_deadlines = []
+    
+    for event in events:
+        days_left = get_days_remaining(event['end_date'])
+        if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
+            approaching_deadlines.append((event, days_left))
+    
+    if approaching_deadlines and NOTIFICATION_CHANNEL_ID:
+        channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
+        if channel:
+            # Find the notification role in the server
+            guild = channel.guild
+            role = discord.utils.get(guild.roles, name=NOTIFICATION_ROLE_NAME)
+            
+            if not role:
+                print(f"Warning: Role '{NOTIFICATION_ROLE_NAME}' not found in server '{guild.name}'")
+                role_mention = f"@{NOTIFICATION_ROLE_NAME}"
+            else:
+                # Use direct role ID for proper pinging
+                role_mention = f"<@&{role.id}>"
+            
+            # Send individual alerts for each event
+            for event, days_left in approaching_deadlines:
+                # First send the role ping as a separate message for guaranteed notification
+                ping_message = await channel.send(f"{role_mention}")
+                
+                embed = discord.Embed(
+                    title=f"⚠️ Event Ending Soon: {event['name']} ⚠️",
+                    description=f"This event deadline is approaching!",
+                    color=0xFF5555
+                )
+                
+                value = (
+                    f"**Type:** {event['type']}\n"
+                    f"**End Date:** {event['end_date']} "
+                    f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
+                    f"[More Info]({event['link']})"
+                )
+                embed.add_field(name="Event Details", value=value, inline=False)
+                
+                await channel.send(embed=embed)
+
+@check_deadlines.before_loop
+async def before_check_deadlines():
+    """Wait until the bot is ready before starting the task loop."""
+    await bot.wait_until_ready()
 
 # Run the bot
 if __name__ == '__main__':
