@@ -23,7 +23,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Path to the events JSON file
-EVENTS_FILE = 'genshin_events.json'
+EVENTS_FILE = 'genshin_combined.json'
 
 def load_events():
     """Load events from the JSON file."""
@@ -72,6 +72,31 @@ def get_days_remaining(date_str):
         print(f"Error calculating days remaining: {e}")
         return None
 
+def format_rewards(reward_list):
+    """Format the rewards for display in Discord embeds."""
+    if not reward_list:
+        return "No reward information available"
+    
+    # Sort rewards by putting Primogems and Mora first, then alphabetically
+    priority_items = ["Primogem", "Mora"]
+    formatted_rewards = []
+    
+    # First add priority items
+    for item in priority_items:
+        if item in reward_list:
+            # Format large numbers with commas
+            quantity = f"{reward_list[item]:,}" if isinstance(reward_list[item], int) else reward_list[item]
+            formatted_rewards.append(f"**{item}**: {quantity}")
+    
+    # Then add other items alphabetically
+    other_items = sorted([item for item in reward_list.keys() if item not in priority_items])
+    for item in other_items:
+        # Format large numbers with commas
+        quantity = f"{reward_list[item]:,}" if isinstance(reward_list[item], int) else reward_list[item]
+        formatted_rewards.append(f"**{item}**: {quantity}")
+    
+    return "\n".join(formatted_rewards)
+
 @bot.event
 async def on_ready():
     """Handle bot startup."""
@@ -107,12 +132,18 @@ async def show_events(ctx):
         else:
             name = event['name']
         
+        # Base event information
         value = (
             f"**Type:** {event['type']}\n"
             f"**Start Date:** {event['start_date']}\n"
             f"**End Date:** {event['end_date']} ({days_text})\n"
-            f"[More Info]({event['link']})"
         )
+        
+        # Add rewards section if available
+        if 'reward_list' in event and event['reward_list']:
+            value += f"\n**Rewards:**\n{format_rewards(event['reward_list'])}\n"
+        
+        value += f"\n[More Info]({event['link']})"
         
         # Check if we need to create a new embed (25 fields limit)
         if field_count >= 25:
@@ -199,8 +230,14 @@ async def test_alert(ctx):
                 f"**Type:** {event['type']}\n"
                 f"**End Date:** {event['end_date']} "
                 f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
-                f"[More Info]({event['link']})"
             )
+            
+            # Add rewards section if available
+            if 'reward_list' in event and event['reward_list']:
+                value += f"\n**Rewards:**\n{format_rewards(event['reward_list'])}\n"
+                
+            value += f"\n[More Info]({event['link']})"
+            
             embed.add_field(name="Event Details", value=value, inline=False)
             
             await test_channel.send(embed=embed)
@@ -220,7 +257,7 @@ async def help_events(ctx):
     
     embed.add_field(
         name="!events", 
-        value="Display all current events sorted by end date", 
+        value="Display all current events sorted by end date with rewards", 
         inline=False
     )
     
@@ -293,8 +330,14 @@ async def check_deadlines():
                     f"**Type:** {event['type']}\n"
                     f"**End Date:** {event['end_date']} "
                     f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
-                    f"[More Info]({event['link']})"
                 )
+                
+                # Add rewards section if available
+                if 'reward_list' in event and event['reward_list']:
+                    value += f"\n**Rewards:**\n{format_rewards(event['reward_list'])}\n"
+                    
+                value += f"\n[More Info]({event['link']})"
+                
                 embed.add_field(name="Event Details", value=value, inline=False)
                 
                 await channel.send(embed=embed)

@@ -1,0 +1,107 @@
+[
+    {
+        "name": "GENSHIN CONCERT 2024 \"Melodies of an Endless Journey\"",
+        "link": "https://genshin-impact.fandom.com/wiki/Genshin_Concert/GENSHIN_CONCERT_2024_%22Melodies_of_an_Endless_Journey%22",
+        "start_date": "September 5, 2024",
+        "end_date": "March 22, 2025",
+        "type": "In-Person",
+        "reward_list": {}
+    },
+    {
+        "name": "Wondrous Reverie",
+        "link": "https://genshin-impact.fandom.com/wiki/Battle_Pass/Wondrous_Reverie",
+        "start_date": "February 12, 2025",
+        "end_date": "March 24, 2025",
+        "type": "In-Game",
+        "reward_list": {
+            "Battle Pass EXP": 3600,
+            "Primogem": 60,
+            "Sanctifying Unction": 60
+        }
+    },
+    {
+        "name": "Travelers' Tales: Anthology Chapter",
+        "link": "https://genshin-impact.fandom.com/wiki/Travelers%27_Tales:_Anthology_Chapter",
+        "start_date": "2025/02/12",
+        "end_date": "2025/03/25",
+        "type": "In-Game",
+        "reward_list": {
+            "Primogem": 120,
+            "Hero's Wit": 12,
+            "Sanctifying Unction": 12,
+            "Mora": 120000
+        }
+    },
+    {
+        "name": "The Forge Realm's Temper: Clever Stratagems",
+        "link": "https://genshin-impact.fandom.com/wiki/The_Forge_Realm%27s_Temper/2025-02-12",
+        "start_date": "2025/02/12",
+        "end_date": "2025/03/26",
+        "type": "In-Game",
+        "reward_list": {
+            "Lucky Coin": 8000
+        }
+    },
+    {
+        "name": "Heated Battle Mode: Automatic Artistry",
+        "link": "https://genshin-impact.fandom.com/wiki/Heated_Battle_Mode/2025-02-21",
+        "start_date": "2025/02/21",
+        "end_date": "2025/03/17",
+        "type": "In-Game",
+        "reward_list": {
+            "Lucky Coin": 1000
+        }
+    },
+    {
+        "name": "Test Run - Furina, Wriothesley, Charlotte, Chongyun, Mika",
+        "link": "https://genshin-impact.fandom.com/wiki/Test_Run_-_Character_Trial_Event/2025-03-04",
+        "start_date": "March 4, 2025",
+        "end_date": "March 25, 2025",
+        "type": "In-Game",
+        "reward_list": {
+            "Primogem": 20,
+            "Lakelight Lily": 3,
+            "Whopperflower Nectar": 3,
+            "Subdetection Unit": 3,
+            "Meshing Gear": 3,
+            "Adventurer's Experience": 6,
+            "Beryl Conch": 3,
+            "Mystic Enhancement Ore": 3,
+            "Cor Lapis": 3,
+            "Damaged Mask": 3,
+            "Mora": 15000,
+            "Wolfhook": 3,
+            "Recruit's Insignia": 3
+        }
+    },
+    {
+        "name": "Invasive Fish Wrangler",
+        "link": "https://genshin-impact.fandom.com/wiki/Invasive_Fish_Wrangler",
+        "start_date": "2025/03/05",
+        "end_date": "2025/03/17",
+        "type": "In-Game",
+        "reward_list": {
+            "Primogem": 420,
+            "Mora": 260000,
+            "Adventurer's Experience": 8,
+            "Hero's Wit": 2,
+            "Mystic Enhancement Ore": 4,
+            "Sanctifying Unction": 6,
+            "Phony Bejeweled Unihornfish": 12,
+            "Chapter of an Ancient Chord": 6,
+            "Sublimation of Pure Sacred Dewdrop": 6,
+            "Wine Goblet of the Pristine Sea": 6
+        }
+    },
+    {
+        "name": "Song of the Welkin Moon",
+        "link": "https://genshin-impact.fandom.com/wiki/Song_of_the_Welkin_Moon",
+        "start_date": "03/10/2025",
+        "end_date": "05/10/2025",
+        "type": "In-Game",
+        "reward_list": {
+            "Primogem": 30,
+            "Mora": 10000
+        }
+    }
+]
