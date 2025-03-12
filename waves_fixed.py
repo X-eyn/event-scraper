@@ -44,6 +44,9 @@ def scrape_rewards(url):
     # Dictionary to store the rewards
     rewards = {}
     
+    # Common UI elements to filter out
+    common_ui_elements = ["Sign in to edit", "Edit", "Add", "Sign In", "Create", "View source"]
+    
     # Method 1: Look for the Total Rewards heading and find all items after it
     logger.info("Method 1: Looking for 'Total Rewards' heading...")
     total_rewards_heading = None
@@ -77,6 +80,11 @@ def scrape_rewards(url):
         # Process each reward link
         for link in reward_links:
             item_name = link.get_text().strip() or link.get('title', '')
+            
+            # Skip UI elements
+            if item_name in common_ui_elements:
+                logger.info(f"Skipping UI element: {item_name}")
+                continue
             
             # If we have a name but no quantity yet, look for a nearby text
             if item_name and item_name not in rewards:
@@ -122,6 +130,11 @@ def scrape_rewards(url):
                         item_name = cells[0].get_text().strip()
                         quantity_text = cells[1].get_text().strip()
                         
+                        # Skip UI elements
+                        if item_name in common_ui_elements:
+                            logger.info(f"Skipping UI element: {item_name}")
+                            continue
+                        
                         if item_name:
                             try:
                                 # Try to extract a number from the quantity text
@@ -136,32 +149,45 @@ def scrape_rewards(url):
                             except ValueError:
                                 logger.warning(f"Could not parse quantity '{quantity_text}' for {item_name}")
     
-    # Method 3: Look for card containers similar to Genshin
-    if not rewards:
-        logger.info("Method 3: Looking for card-like containers...")
-        card_containers = soup.find_all('div', class_='card-container')
-        
-        for card in card_containers:
-            item_link = card.find('a')
+    # Method 3: Look for card containers 
+    # Run this regardless of whether previous methods found rewards - FIXED!
+    logger.info("Method 3: Looking for card-like containers...")
+    card_containers = soup.find_all('div', class_='card-container')
+    
+    for card in card_containers:
+        # Find the item name in the card-caption (more reliable)
+        caption = card.find('span', class_='card-caption')
+        if caption and caption.find('a'):
+            item_link = caption.find('a')
+            item_name = item_link.get('title', '') or item_link.get_text().strip()
+            
+            # Skip UI elements
+            if item_name in common_ui_elements:
+                logger.info(f"Skipping UI element in card: {item_name}")
+                continue
+            
+            # Find the quantity text using a more specific selector for the card-text span
             quantity_span = None
+            for span in card.select('span.card-text.card-font'):
+                quantity_span = span
+                break
             
-            for span in card.find_all('span'):
-                if span.get('class') and 'card-text' in span.get('class'):
-                    quantity_span = span
-                    break
+            if not quantity_span:
+                # Try alternative selector if the above doesn't work
+                for span in card.find_all('span'):
+                    if span.get('class') and 'card-text' in span.get('class'):
+                        quantity_span = span
+                        break
             
-            if item_link and quantity_span:
-                item_name = item_link.get('title', '') or item_link.get_text().strip()
+            if item_name and quantity_span:
                 quantity_text = quantity_span.text.strip()
-                
-                if item_name and quantity_text:
-                    try:
-                        # Clean up quantity (remove commas, etc.)
-                        quantity = int(quantity_text.replace(',', ''))
-                        rewards[item_name] = quantity
-                        logger.info(f"Found reward: {item_name} × {quantity}")
-                    except ValueError:
-                        logger.warning(f"Could not parse quantity '{quantity_text}' for {item_name}")
+                try:
+                    # Clean up quantity (remove commas, etc.)
+                    quantity = int(quantity_text.replace(',', ''))
+                    rewards[item_name] = quantity
+                    logger.info(f"Found reward in card: {item_name} × {quantity}")
+                except ValueError:
+                    logger.warning(f"Could not parse quantity '{quantity_text}' for {item_name}")
     
     return rewards
 
@@ -474,18 +500,18 @@ def save_to_json(data, filename="waves_events.json"):
         data: The data to save
         filename: The name of the output JSON file
     """
-    logger.info(f"Saving data to {filename}")
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+    
     logger.info(f"Data saved to {filename}")
 
 def main():
     """
     Main function to run the scraper.
     """
-    logger.info("Starting Wuthering Waves events scraper")
+    logger.info("Starting Wuthering Waves events scraper...")
     scrape_waves_events()
-    logger.info("Scraping complete")
+    logger.info("Scraping completed!")
 
 if __name__ == "__main__":
     main()
