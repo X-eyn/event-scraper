@@ -6,7 +6,6 @@ import datetime
 from dateutil import parser
 import asyncio
 from dotenv import load_dotenv
-import subprocess
 
 # Load environment variables from .env file
 load_dotenv()
@@ -100,10 +99,19 @@ def format_rewards(reward_list):
     return "\n".join(formatted_rewards)
 
 async def run_scraper(file_path):
+    """
+    Asynchronously run the scraper script using asyncio's subprocess.
+    This prevents blocking the event loop.
+    """
     try:
-        result = subprocess.run(['python', file_path], capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f'Error running {file_path}: {result.stderr}')
+        process = await asyncio.create_subprocess_exec(
+            'python', file_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            print(f'Error running {file_path}: {stderr.decode()}')
             return False
         return True
     except Exception as e:
@@ -304,25 +312,21 @@ async def test_alert(ctx, game_type=None):
         # For testing, consider all events as approaching deadline
         for event in events:
             days_left = get_days_remaining(event['end_date'])
-            # For testing, we'll display all events regardless of days left
             approaching_deadlines.append((event, days_left if days_left is not None else 0))
         
         if approaching_deadlines:
-            # Show a message explaining the test
             game_name = "Genshin Impact" if current_game == "genshin" else "Wuthering Waves"
             await ctx.send(f"**Testing {game_name} Alert Feature**")
             
-            # Send individual alerts for each event
             for event, days_left in approaching_deadlines:
                 # First send the role ping as a separate message for guaranteed notification
-                ping_message = await test_channel.send(f"{role_mention}")
+                await test_channel.send(f"{role_mention}")
                 
-                # Use different colors for different games
                 color = 0x00AAFF if current_game == "genshin" else 0x7289DA
                 
                 embed = discord.Embed(
                     title=f"⚠️ {game_name} Event Ending Soon: {event['name']} ⚠️",
-                    description=f"This event deadline is approaching!",
+                    description="This event deadline is approaching!",
                     color=color
                 )
                 
@@ -332,7 +336,6 @@ async def test_alert(ctx, game_type=None):
                     f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
                 )
                 
-                # Add rewards section if available
                 reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
                 if reward_key in event and event[reward_key]:
                     value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
@@ -351,11 +354,11 @@ async def test_alert(ctx, game_type=None):
 @bot.command(name='refresh')
 async def refresh_events(ctx):
     """
-    Rerun the scrapers and reload the events data for both games
+    Rerun the scrapers and reload the events data for both games.
     """
     await ctx.send('Refreshing events data...')
     
-    # Run both scrapers
+    # Run both scrapers asynchronously
     success1 = await run_scraper('genshin_final.py')
     success2 = await run_scraper('waves_fixed.py')
     
@@ -451,7 +454,6 @@ async def check_deadlines():
         if approaching_deadlines and NOTIFICATION_CHANNEL_ID:
             channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
             if channel:
-                # Find the notification role in the server
                 guild = channel.guild
                 role = discord.utils.get(guild.roles, name=NOTIFICATION_ROLE_NAME)
                 
@@ -459,20 +461,18 @@ async def check_deadlines():
                     print(f"Warning: Role '{NOTIFICATION_ROLE_NAME}' not found in server '{guild.name}'")
                     role_mention = f"@{NOTIFICATION_ROLE_NAME}"
                 else:
-                    # Use direct role ID for proper pinging
                     role_mention = f"<@&{role.id}>"
                 
                 game_name = "Genshin Impact" if game_type == "genshin" else "Wuthering Waves"
                 color = 0x00AAFF if game_type == "genshin" else 0x7289DA
                 
-                # Send individual alerts for each event
                 for event, days_left in approaching_deadlines:
-                    # First send the role ping as a separate message for guaranteed notification
-                    ping_message = await channel.send(f"{role_mention}")
+                    # Send the role ping separately for guaranteed notification
+                    await channel.send(f"{role_mention}")
                     
                     embed = discord.Embed(
                         title=f"⚠️ {game_name} Event Ending Soon: {event['name']} ⚠️",
-                        description=f"This event deadline is approaching!",
+                        description="This event deadline is approaching!",
                         color=color
                     )
                     
@@ -482,7 +482,6 @@ async def check_deadlines():
                         f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
                     )
                     
-                    # Add rewards section if available
                     reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
                     if reward_key in event and event[reward_key]:
                         value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
@@ -500,7 +499,6 @@ async def before_check_deadlines():
 
 # Run the bot
 if __name__ == '__main__':
-    # Check if token exists
     if not DISCORD_TOKEN:
         print("Error: No Discord token found.")
         print("Please set your Discord token as an environment variable:")
