@@ -6,6 +6,7 @@ import datetime
 from dateutil import parser
 import asyncio
 from dotenv import load_dotenv
+import subprocess
 
 # Load environment variables from .env file
 load_dotenv()
@@ -97,6 +98,17 @@ def format_rewards(reward_list):
         formatted_rewards.append(f"**{item}**: {quantity}")
     
     return "\n".join(formatted_rewards)
+
+async def run_scraper(file_path):
+    try:
+        result = subprocess.run(['python', file_path], capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f'Error running {file_path}: {result.stderr}')
+            return False
+        return True
+    except Exception as e:
+        print(f'Exception running {file_path}: {e}')
+        return False
 
 @bot.event
 async def on_ready():
@@ -336,6 +348,31 @@ async def test_alert(ctx, game_type=None):
             game_name = "Genshin Impact" if current_game == "genshin" else "Wuthering Waves"
             await ctx.send(f"No {game_name} events found to display in the test alert.")
 
+@bot.command(name='refresh')
+async def refresh_events(ctx):
+    """
+    Rerun the scrapers and reload the events data for both games
+    """
+    await ctx.send('Refreshing events data...')
+    
+    # Run both scrapers
+    success1 = await run_scraper('genshin_final.py')
+    success2 = await run_scraper('waves_fixed.py')
+    
+    if not success1 or not success2:
+        await ctx.send('❌ Error occurred while running scrapers. Check logs for details.')
+        return
+    
+    # Reload events for both games
+    genshin_events = load_events('genshin')
+    waves_events = load_events('waves')
+    
+    if not genshin_events and not waves_events:
+        await ctx.send('❌ No events found after refresh. Check scrapers.')
+        return
+    
+    await ctx.send('✅ Events data refreshed successfully!')
+
 @bot.command(name='help_events')
 async def help_events(ctx):
     """Display help information about the bot commands."""
@@ -378,6 +415,12 @@ async def help_events(ctx):
     embed.add_field(
         name="!test_alert [game_type]", 
         value="Test the deadline alert feature. Optional: specify 'genshin' or 'waves' to test only one game", 
+        inline=False
+    )
+    
+    embed.add_field(
+        name="!refresh", 
+        value="Rerun the scrapers and reload the events data", 
         inline=False
     )
     

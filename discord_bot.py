@@ -6,6 +6,7 @@ import datetime
 from dateutil import parser
 import asyncio
 from dotenv import load_dotenv
+import subprocess
 
 # Load environment variables from .env file
 load_dotenv()
@@ -96,6 +97,40 @@ def format_rewards(reward_list):
         formatted_rewards.append(f"**{item}**: {quantity}")
     
     return "\n".join(formatted_rewards)
+
+async def run_scraper(file_path):
+    try:
+        result = subprocess.run(['python', file_path], capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f'Error running {file_path}: {result.stderr}')
+            return False
+        return True
+    except Exception as e:
+        print(f'Exception running {file_path}: {e}')
+        return False
+
+@bot.command(name='refresh')
+async def refresh_events(ctx):
+    """
+    Rerun the scrapers and reload the events data
+    """
+    await ctx.send('Refreshing events data...')
+    
+    # Run both scrapers
+    success1 = await run_scraper('genshin_final.py')
+    success2 = await run_scraper('waves_fixed.py')
+    
+    if not success1 or not success2:
+        await ctx.send('❌ Error occurred while running scrapers. Check logs for details.')
+        return
+    
+    # Reload events
+    events = load_events()
+    if not events:
+        await ctx.send('❌ No events found after refresh. Check scrapers.')
+        return
+    
+    await ctx.send('✅ Events data refreshed successfully!')
 
 @bot.event
 async def on_ready():
@@ -276,6 +311,12 @@ async def help_events(ctx):
     embed.add_field(
         name="!test_alert", 
         value="Test the deadline alert feature in the current channel", 
+        inline=False
+    )
+    
+    embed.add_field(
+        name="!refresh", 
+        value="Rerun the scrapers and reload the events data", 
         inline=False
     )
     
