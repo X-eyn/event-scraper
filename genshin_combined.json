@@ -10,8 +10,8 @@
     {
         "name": "Wondrous Reverie",
         "link": "https://genshin-impact.fandom.com/wiki/Battle_Pass/Wondrous_Reverie",
-        "start_date": "February 12, 2025",
-        "end_date": "March 24, 2025",
+        "start_date": "2025/03/12",
+        "end_date": "2025/03/24",
         "type": "In-Game",
         "reward_list": {
             "Battle Pass EXP": 3600,
@@ -102,6 +102,24 @@
         "reward_list": {
             "Primogem": 30,
             "Mora": 10000
+        }
+    },
+    {
+        "name": "Reel Ad-Venture",
+        "link": "https://genshin-impact.fandom.com/wiki/Reel_Ad-Venture",
+        "start_date": "2025/03/12",
+        "end_date": "2025/03/24",
+        "type": "In-Game",
+        "reward_list": {
+            "Primogem": 420,
+            "Mora": 220000,
+            "Hero's Wit": 8,
+            "Adventurer's Experience": 8,
+            "Mystic Enhancement Ore": 12,
+            "Sanctifying Unction": 4,
+            "Guide to Equity": 4,
+            "Guide to Justice": 4,
+            "Guide to Order": 4
         }
     }
 ]

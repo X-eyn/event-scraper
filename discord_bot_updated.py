@@ -46,17 +46,37 @@ def get_formatted_events(game_type="genshin"):
     active_events = []
     for event in events:
         try:
+            # Try to parse both dates
+            start_date = parser.parse(event['start_date'])
             end_date = parser.parse(event['end_date'])
+            
+            # Check if dates might be reversed (start date after end date)
+            if start_date > end_date:
+                # Swap the dates for comparison, but don't modify the original data
+                temp = end_date
+                end_date = start_date
+                start_date = temp
+            
+            # Include event if the end date is in the future
             if end_date.replace(tzinfo=None) >= current_date:
                 active_events.append(event)
-        except:
+        except Exception as e:
             # If we can't parse the date, include it just in case
+            print(f"Date parsing error for event '{event.get('name', 'Unknown')}': {e}")
             active_events.append(event)
     
     # Sort events by end date (closest ending first)
     try:
-        active_events.sort(key=lambda x: parser.parse(x['end_date']))
-    except:
+        def safe_parse_date(date_str):
+            try:
+                return parser.parse(date_str)
+            except:
+                # Return a far future date if parsing fails
+                return datetime.datetime(2099, 12, 31)
+                
+        active_events.sort(key=lambda x: safe_parse_date(x['end_date']))
+    except Exception as e:
+        print(f"Error sorting events: {e}")
         # If sorting fails, don't worry about it
         pass
     
@@ -97,6 +117,26 @@ def format_rewards(reward_list):
         formatted_rewards.append(f"**{item}**: {quantity}")
     
     return "\n".join(formatted_rewards)
+
+async def run_scraper(file_path):
+    """
+    Asynchronously run the scraper script using asyncio's subprocess.
+    This prevents blocking the event loop.
+    """
+    try:
+        process = await asyncio.create_subprocess_exec(
+            'python', file_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            print(f'Error running {file_path}: {stderr.decode()}')
+            return False
+        return True
+    except Exception as e:
+        print(f'Exception running {file_path}: {e}')
+        return False
 
 @bot.event
 async def on_ready():
@@ -292,25 +332,21 @@ async def test_alert(ctx, game_type=None):
         # For testing, consider all events as approaching deadline
         for event in events:
             days_left = get_days_remaining(event['end_date'])
-            # For testing, we'll display all events regardless of days left
             approaching_deadlines.append((event, days_left if days_left is not None else 0))
         
         if approaching_deadlines:
-            # Show a message explaining the test
             game_name = "Genshin Impact" if current_game == "genshin" else "Wuthering Waves"
             await ctx.send(f"**Testing {game_name} Alert Feature**")
             
-            # Send individual alerts for each event
             for event, days_left in approaching_deadlines:
                 # First send the role ping as a separate message for guaranteed notification
-                ping_message = await test_channel.send(f"{role_mention}")
+                await test_channel.send(f"{role_mention}")
                 
-                # Use different colors for different games
                 color = 0x00AAFF if current_game == "genshin" else 0x7289DA
                 
                 embed = discord.Embed(
                     title=f"⚠️ {game_name} Event Ending Soon: {event['name']} ⚠️",
-                    description=f"This event deadline is approaching!",
+                    description="This event deadline is approaching!",
                     color=color
                 )
                 
@@ -320,7 +356,6 @@ async def test_alert(ctx, game_type=None):
                     f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
                 )
                 
-                # Add rewards section if available
                 reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
                 if reward_key in event and event[reward_key]:
                     value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
@@ -335,6 +370,31 @@ async def test_alert(ctx, game_type=None):
         else:
             game_name = "Genshin Impact" if current_game == "genshin" else "Wuthering Waves"
             await ctx.send(f"No {game_name} events found to display in the test alert.")
+
+@bot.command(name='refresh')
+async def refresh_events(ctx):
+    """
+    Rerun the scrapers and reload the events data for both games.
+    """
+    await ctx.send('Refreshing events data...')
+    
+    # Run both scrapers asynchronously
+    success1 = await run_scraper('genshin_final.py')
+    success2 = await run_scraper('waves_fixed.py')
+    
+    if not success1 or not success2:
+        await ctx.send('❌ Error occurred while running scrapers. Check logs for details.')
+        return
+    
+    # Reload events for both games
+    genshin_events = load_events('genshin')
+    waves_events = load_events('waves')
+    
+    if not genshin_events and not waves_events:
+        await ctx.send('❌ No events found after refresh. Check scrapers.')
+        return
+    
+    await ctx.send('✅ Events data refreshed successfully!')
 
 @bot.command(name='help_events')
 async def help_events(ctx):
@@ -382,6 +442,12 @@ async def help_events(ctx):
     )
     
     embed.add_field(
+        name="!refresh", 
+        value="Rerun the scrapers and reload the events data", 
+        inline=False
+    )
+    
+    embed.add_field(
         name="!help_events", 
         value="Display this help message", 
         inline=False
@@ -408,7 +474,6 @@ async def check_deadlines():
         if approaching_deadlines and NOTIFICATION_CHANNEL_ID:
             channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
             if channel:
-                # Find the notification role in the server
                 guild = channel.guild
                 role = discord.utils.get(guild.roles, name=NOTIFICATION_ROLE_NAME)
                 
@@ -416,20 +481,18 @@ async def check_deadlines():
                     print(f"Warning: Role '{NOTIFICATION_ROLE_NAME}' not found in server '{guild.name}'")
                     role_mention = f"@{NOTIFICATION_ROLE_NAME}"
                 else:
-                    # Use direct role ID for proper pinging
                     role_mention = f"<@&{role.id}>"
                 
                 game_name = "Genshin Impact" if game_type == "genshin" else "Wuthering Waves"
                 color = 0x00AAFF if game_type == "genshin" else 0x7289DA
                 
-                # Send individual alerts for each event
                 for event, days_left in approaching_deadlines:
-                    # First send the role ping as a separate message for guaranteed notification
-                    ping_message = await channel.send(f"{role_mention}")
+                    # Send the role ping separately for guaranteed notification
+                    await channel.send(f"{role_mention}")
                     
                     embed = discord.Embed(
                         title=f"⚠️ {game_name} Event Ending Soon: {event['name']} ⚠️",
-                        description=f"This event deadline is approaching!",
+                        description="This event deadline is approaching!",
                         color=color
                     )
                     
@@ -439,7 +502,6 @@ async def check_deadlines():
                         f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
                     )
                     
-                    # Add rewards section if available
                     reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
                     if reward_key in event and event[reward_key]:
                         value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
@@ -457,7 +519,6 @@ async def before_check_deadlines():
 
 # Run the bot
 if __name__ == '__main__':
-    # Check if token exists
     if not DISCORD_TOKEN:
         print("Error: No Discord token found.")
         print("Please set your Discord token as an environment variable:")
