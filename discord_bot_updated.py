@@ -46,17 +46,37 @@ def get_formatted_events(game_type="genshin"):
     active_events = []
     for event in events:
         try:
+            # Try to parse both dates
+            start_date = parser.parse(event['start_date'])
             end_date = parser.parse(event['end_date'])
+            
+            # Check if dates might be reversed (start date after end date)
+            if start_date > end_date:
+                # Swap the dates for comparison, but don't modify the original data
+                temp = end_date
+                end_date = start_date
+                start_date = temp
+            
+            # Include event if the end date is in the future
             if end_date.replace(tzinfo=None) >= current_date:
                 active_events.append(event)
-        except:
+        except Exception as e:
             # If we can't parse the date, include it just in case
+            print(f"Date parsing error for event '{event.get('name', 'Unknown')}': {e}")
             active_events.append(event)
     
     # Sort events by end date (closest ending first)
     try:
-        active_events.sort(key=lambda x: parser.parse(x['end_date']))
-    except:
+        def safe_parse_date(date_str):
+            try:
+                return parser.parse(date_str)
+            except:
+                # Return a far future date if parsing fails
+                return datetime.datetime(2099, 12, 31)
+                
+        active_events.sort(key=lambda x: safe_parse_date(x['end_date']))
+    except Exception as e:
+        print(f"Error sorting events: {e}")
         # If sorting fails, don't worry about it
         pass
     
