@@ -1,5 +1,6 @@
 import discord
-from discord.ext import commands, tasks
+from discord import app_commands
+from discord.ext import tasks
 import json
 import os
 import datetime
@@ -20,7 +21,8 @@ ALERT_DAYS_THRESHOLD = 3  # Alert when deadline is this many days away or less
 # Initialize bot with intents
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
 # Path to the events JSON files
 GENSHIN_EVENTS_FILE = 'genshin_combined.json'
@@ -143,15 +145,21 @@ async def on_ready():
     """Handle bot startup."""
     print(f'{bot.user.name} has connected to Discord!')
     print(f'Connected to {len(bot.guilds)} guilds')
+    
+    # Sync commands with Discord
+    await tree.sync()
+    print("Slash commands synced successfully!")
+    
     check_deadlines.start()
 
-@bot.command(name='genshin')
-async def show_genshin_events(ctx):
+@tree.command(name="genshin", description="Display all current Genshin Impact events")
+async def show_genshin_events(interaction: discord.Interaction):
     """Command to display all current Genshin Impact events."""
+    await interaction.response.defer()
     events = get_formatted_events("genshin")
     
     if not events:
-        await ctx.send("No active Genshin Impact events found.")
+        await interaction.followup.send("No active Genshin Impact events found.")
         return
     
     # Create embeds for events (Discord has a limit of 25 fields per embed)
@@ -203,15 +211,16 @@ async def show_genshin_events(ctx):
     
     # Send all embeds
     for embed in embeds:
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
-@bot.command(name='waves')
-async def show_waves_events(ctx):
+@tree.command(name="waves", description="Display all current Wuthering Waves events")
+async def show_waves_events(interaction: discord.Interaction):
     """Command to display all current Wuthering Waves events."""
+    await interaction.response.defer()
     events = get_formatted_events("waves")
     
     if not events:
-        await ctx.send("No active Wuthering Waves events found.")
+        await interaction.followup.send("No active Wuthering Waves events found.")
         return
     
     # Create embeds for events (Discord has a limit of 25 fields per embed)
@@ -263,67 +272,174 @@ async def show_waves_events(ctx):
     
     # Send all embeds
     for embed in embeds:
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
-@bot.command(name='events')
-async def show_all_events(ctx):
+@tree.command(name="events", description="Display both Genshin Impact and Wuthering Waves events")
+async def show_all_events(interaction: discord.Interaction):
     """Command to display both Genshin Impact and Wuthering Waves events."""
-    await ctx.send("Showing events for both games. Use `!genshin` or `!waves` for specific game events.")
+    await interaction.response.defer()
+    await interaction.followup.send("Showing events for both games. Use `/genshin` or `/waves` for specific game events.")
     
-    # Display Genshin events first
-    await show_genshin_events(ctx)
+    # Display Genshin events
+    genshin_events = get_formatted_events("genshin")
+    if not genshin_events:
+        await interaction.followup.send("No active Genshin Impact events found.")
+    else:
+        # Create embeds for events
+        embeds = []
+        current_embed = discord.Embed(
+            title="Genshin Impact Events",
+            description="Current active events",
+            color=0x00AAFF
+        )
+        
+        field_count = 0
+        
+        for event in genshin_events:
+            days_left = get_days_remaining(event['end_date'])
+            days_text = f"{days_left} days left" if days_left is not None else "Date unknown"
+            
+            if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
+                name = f"⚠️ {event['name']} ⚠️"
+            else:
+                name = event['name']
+            
+            value = (
+                f"**Type:** {event['type']}\n"
+                f"**Start Date:** {event['start_date']}\n"
+                f"**End Date:** {event['end_date']} ({days_text})\n"
+            )
+            
+            reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
+            if reward_key in event and event[reward_key]:
+                value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
+            
+            value += f"\n[More Info]({event['link']})"
+            
+            if field_count >= 25:
+                embeds.append(current_embed)
+                current_embed = discord.Embed(
+                    title="Genshin Impact Events (Continued)",
+                    color=0x00AAFF
+                )
+                field_count = 0
+            
+            current_embed.add_field(name=name, value=value, inline=False)
+            field_count += 1
+        
+        embeds.append(current_embed)
+        
+        for embed in embeds:
+            await interaction.followup.send(embed=embed)
     
-    # Then display Wuthering Waves events
-    await show_waves_events(ctx)
+    # Display Wuthering Waves events
+    waves_events = get_formatted_events("waves")
+    if not waves_events:
+        await interaction.followup.send("No active Wuthering Waves events found.")
+    else:
+        # Create embeds for events
+        embeds = []
+        current_embed = discord.Embed(
+            title="Wuthering Waves Events",
+            description="Current active events",
+            color=0x7289DA
+        )
+        
+        field_count = 0
+        
+        for event in waves_events:
+            days_left = get_days_remaining(event['end_date'])
+            days_text = f"{days_left} days left" if days_left is not None else "Date unknown"
+            
+            if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
+                name = f"⚠️ {event['name']} ⚠️"
+            else:
+                name = event['name']
+            
+            value = (
+                f"**Type:** {event['type']}\n"
+                f"**Start Date:** {event['start_date']}\n"
+                f"**End Date:** {event['end_date']} ({days_text})\n"
+            )
+            
+            reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
+            if reward_key in event and event[reward_key]:
+                value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
+            
+            value += f"\n[More Info]({event['link']})"
+            
+            if field_count >= 25:
+                embeds.append(current_embed)
+                current_embed = discord.Embed(
+                    title="Wuthering Waves Events (Continued)",
+                    color=0x7289DA
+                )
+                field_count = 0
+            
+            current_embed.add_field(name=name, value=value, inline=False)
+            field_count += 1
+        
+        embeds.append(current_embed)
+        
+        for embed in embeds:
+            await interaction.followup.send(embed=embed)
 
-@bot.command(name='set_alert_channel')
-@commands.has_permissions(administrator=True)
-async def set_alert_channel(ctx):
+@tree.command(name="set_alert_channel", description="Set the current channel as the notification channel")
+@app_commands.default_permissions(administrator=True)
+async def set_alert_channel(interaction: discord.Interaction):
     """Set the current channel as the notification channel."""
     global NOTIFICATION_CHANNEL_ID
-    NOTIFICATION_CHANNEL_ID = ctx.channel.id
-    await ctx.send(f"✅ This channel has been set as the alert notification channel.")
+    NOTIFICATION_CHANNEL_ID = interaction.channel_id
+    await interaction.response.send_message(f"✅ This channel has been set as the alert notification channel.")
 
-@bot.command(name='set_alert_role')
-@commands.has_permissions(administrator=True)
-async def set_alert_role(ctx, *, role_name):
+@tree.command(name="set_alert_role", description="Set the role to be pinged for event deadline alerts")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(role_name="Name of the role to ping for alerts")
+async def set_alert_role(interaction: discord.Interaction, role_name: str):
     """Set the role to be pinged for event deadline alerts."""
     global NOTIFICATION_ROLE_NAME
     
     # Check if the role exists in the guild
-    role = discord.utils.get(ctx.guild.roles, name=role_name)
+    role = discord.utils.get(interaction.guild.roles, name=role_name)
     if not role:
-        await ctx.send(f"⚠️ Role '{role_name}' not found in this server. Please check the role name and try again.")
+        await interaction.response.send_message(f"⚠️ Role '{role_name}' not found in this server. Please check the role name and try again.")
         return
     
     NOTIFICATION_ROLE_NAME = role_name
-    await ctx.send(f"✅ Role '{role_name}' will now be pinged for event deadline alerts.")
+    await interaction.response.send_message(f"✅ Role '{role_name}' will now be pinged for event deadline alerts.")
 
-@bot.command(name='test_alert')
-async def test_alert(ctx, game_type=None):
+@tree.command(name="test_alert", description="Test the deadline alert feature")
+@app_commands.describe(game_type="Game type (genshin or waves)")
+@app_commands.choices(game_type=[
+    app_commands.Choice(name="Genshin Impact", value="genshin"),
+    app_commands.Choice(name="Wuthering Waves", value="waves")
+])
+async def test_alert(interaction: discord.Interaction, game_type: app_commands.Choice[str] = None):
     """Test command to simulate the deadline alert feature."""
+    await interaction.response.defer()
+    
     # Use the current channel for the test
-    test_channel = ctx.channel
+    test_channel = interaction.channel
     
     # Find the notification role in the server
-    role = discord.utils.get(ctx.guild.roles, name=NOTIFICATION_ROLE_NAME)
+    role = discord.utils.get(interaction.guild.roles, name=NOTIFICATION_ROLE_NAME)
     
     if not role:
-        await ctx.send(f"⚠️ Warning: Role '{NOTIFICATION_ROLE_NAME}' not found in this server. Creating a placeholder mention.")
+        await interaction.followup.send(f"⚠️ Warning: Role '{NOTIFICATION_ROLE_NAME}' not found in this server. Creating a placeholder mention.")
         role_mention = f"@{NOTIFICATION_ROLE_NAME}"
     else:
         # Use direct role ID for proper pinging
         role_mention = f"<@&{role.id}>"
     
     game_types = []
-    if game_type is None or game_type.lower() not in ["genshin", "waves"]:
-        # If no valid game type specified, test both
+    if game_type is None:
+        # If no game type specified, test both
         game_types = ["genshin", "waves"]
-        await ctx.send("Testing alerts for both Genshin Impact and Wuthering Waves events.")
+        await interaction.followup.send("Testing alerts for both Genshin Impact and Wuthering Waves events.")
     else:
-        game_types = [game_type.lower()]
-        game_name = "Genshin Impact" if game_type.lower() == "genshin" else "Wuthering Waves"
-        await ctx.send(f"Testing alerts for {game_name} events only.")
+        game_types = [game_type.value]
+        game_name = "Genshin Impact" if game_type.value == "genshin" else "Wuthering Waves"
+        await interaction.followup.send(f"Testing alerts for {game_name} events only.")
     
     for current_game in game_types:
         events = get_formatted_events(current_game)
@@ -336,7 +452,7 @@ async def test_alert(ctx, game_type=None):
         
         if approaching_deadlines:
             game_name = "Genshin Impact" if current_game == "genshin" else "Wuthering Waves"
-            await ctx.send(f"**Testing {game_name} Alert Feature**")
+            await interaction.followup.send(f"**Testing {game_name} Alert Feature**")
             
             for event, days_left in approaching_deadlines:
                 # First send the role ping as a separate message for guaranteed notification
@@ -366,24 +482,25 @@ async def test_alert(ctx, game_type=None):
                 
                 await test_channel.send(embed=embed)
             
-            await ctx.send(f"{game_name} alert test completed!")
+            await interaction.followup.send(f"{game_name} alert test completed!")
         else:
             game_name = "Genshin Impact" if current_game == "genshin" else "Wuthering Waves"
-            await ctx.send(f"No {game_name} events found to display in the test alert.")
+            await interaction.followup.send(f"No {game_name} events found to display in the test alert.")
 
-@bot.command(name='refresh')
-async def refresh_events(ctx):
+@tree.command(name="refresh", description="Rerun the scrapers and reload the events data")
+async def refresh_events(interaction: discord.Interaction):
     """
     Rerun the scrapers and reload the events data for both games.
     """
-    await ctx.send('Refreshing events data...')
+    await interaction.response.defer()
+    await interaction.followup.send('Refreshing events data...')
     
     # Run both scrapers asynchronously
     success1 = await run_scraper('genshin_final.py')
     success2 = await run_scraper('waves_fixed.py')
     
     if not success1 or not success2:
-        await ctx.send('❌ Error occurred while running scrapers. Check logs for details.')
+        await interaction.followup.send('❌ Error occurred while running scrapers. Check logs for details.')
         return
     
     # Reload events for both games
@@ -391,13 +508,13 @@ async def refresh_events(ctx):
     waves_events = load_events('waves')
     
     if not genshin_events and not waves_events:
-        await ctx.send('❌ No events found after refresh. Check scrapers.')
+        await interaction.followup.send('❌ No events found after refresh. Check scrapers.')
         return
     
-    await ctx.send('✅ Events data refreshed successfully!')
+    await interaction.followup.send('✅ Events data refreshed successfully!')
 
-@bot.command(name='help_events')
-async def help_events(ctx):
+@tree.command(name="help", description="Display help information about the bot commands")
+async def help_events(interaction: discord.Interaction):
     """Display help information about the bot commands."""
     embed = discord.Embed(
         title="Game Events Bot Help",
@@ -406,54 +523,54 @@ async def help_events(ctx):
     )
     
     embed.add_field(
-        name="!genshin", 
+        name="/genshin", 
         value="Display all current Genshin Impact events sorted by end date with rewards", 
         inline=False
     )
     
     embed.add_field(
-        name="!waves", 
+        name="/waves", 
         value="Display all current Wuthering Waves events sorted by end date with rewards", 
         inline=False
     )
     
     embed.add_field(
-        name="!events", 
+        name="/events", 
         value="Display all events from both games", 
         inline=False
     )
     
     embed.add_field(
-        name="!set_alert_channel", 
+        name="/set_alert_channel", 
         value="Set the current channel to receive deadline alerts (Admin only)", 
         inline=False
     )
     
     embed.add_field(
-        name="!set_alert_role", 
-        value="Set which role to ping for deadline alerts, e.g., !set_alert_role event-alerts (Admin only)", 
+        name="/set_alert_role", 
+        value="Set which role to ping for deadline alerts (Admin only)", 
         inline=False
     )
     
     embed.add_field(
-        name="!test_alert [game_type]", 
-        value="Test the deadline alert feature. Optional: specify 'genshin' or 'waves' to test only one game", 
+        name="/test_alert", 
+        value="Test the deadline alert feature. Optional: specify game type to test only one game", 
         inline=False
     )
     
     embed.add_field(
-        name="!refresh", 
+        name="/refresh", 
         value="Rerun the scrapers and reload the events data", 
         inline=False
     )
     
     embed.add_field(
-        name="!help_events", 
+        name="/help", 
         value="Display this help message", 
         inline=False
     )
     
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
 @tasks.loop(hours=CHECK_INTERVAL_HOURS)
 async def check_deadlines():
@@ -481,6 +598,7 @@ async def check_deadlines():
                     print(f"Warning: Role '{NOTIFICATION_ROLE_NAME}' not found in server '{guild.name}'")
                     role_mention = f"@{NOTIFICATION_ROLE_NAME}"
                 else:
+                    # Use direct role ID for proper pinging
                     role_mention = f"<@&{role.id}>"
                 
                 game_name = "Genshin Impact" if game_type == "genshin" else "Wuthering Waves"
@@ -526,8 +644,8 @@ if __name__ == '__main__':
         print("  PowerShell: $env:DISCORD_TOKEN = 'your_token_here'")
     else:
         print("Starting Discord bot...")
-        print("- Genshin Impact events: Use !genshin command")
-        print("- Wuthering Waves events: Use !waves command")
-        print("- All events: Use !events command")
-        print("- For help: Use !help_events command")
+        print("- Genshin Impact events: Use /genshin command")
+        print("- Wuthering Waves events: Use /waves command")
+        print("- All events: Use /events command")
+        print("- For help: Use /help command")
         bot.run(DISCORD_TOKEN)
