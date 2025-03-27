@@ -26,7 +26,7 @@ tree = app_commands.CommandTree(bot)
 
 # Path to the events JSON files
 GENSHIN_EVENTS_FILE = 'genshin_combined.json'
-WAVES_EVENTS_FILE = 'waves_events.json'
+WAVES_EVENTS_FILE = 'wuthering_waves_current_events.json'
 
 def load_events(game_type="genshin"):
     """Load events from the JSON file based on game type."""
@@ -38,6 +38,42 @@ def load_events(game_type="genshin"):
         print(f"Error loading {game_type} events: {e}")
         return []
 
+def extract_dates_from_string(date_range_str):
+    """Extract start and end dates from a date range string like 'February 12, 2025 – March 19, 2025'."""
+    try:
+        # Split by common date separators
+        for separator in [' – ', ' - ', ' to ', '-', '–']:
+            if separator in date_range_str:
+                dates = date_range_str.split(separator, 1)
+                if len(dates) == 2:
+                    start_date = parser.parse(dates[0].strip())
+                    end_date = parser.parse(dates[1].strip())
+                    return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+        
+        # If no separator is found, assume the whole string is a single date
+        # This is a fallback case
+        date = parser.parse(date_range_str.strip())
+        return date.strftime('%Y-%m-%d'), date.strftime('%Y-%m-%d')
+    except Exception as e:
+        print(f"Error parsing date range: {date_range_str}, Error: {e}")
+        return None, None
+
+def parse_reward_string(reward_str):
+    """Parse a reward string in the format 'Item Name:Quantity'."""
+    try:
+        if ':' in reward_str:
+            name, quantity = reward_str.rsplit(':', 1)
+            try:
+                quantity = int(quantity)
+            except ValueError:
+                # If quantity can't be converted to int, keep it as string
+                pass
+            return name, quantity
+        return reward_str, 1  # Default to quantity 1 if no quantity specified
+    except Exception as e:
+        print(f"Error parsing reward string: {reward_str}, Error: {e}")
+        return reward_str, 1
+
 def get_formatted_events(game_type="genshin"):
     """Format events for display in Discord embeds."""
     events = load_events(game_type)
@@ -46,37 +82,69 @@ def get_formatted_events(game_type="genshin"):
     
     # Filter out events that have already ended
     active_events = []
-    for event in events:
-        try:
-            # Try to parse both dates
-            start_date = parser.parse(event['start_date'])
-            end_date = parser.parse(event['end_date'])
-            
-            # Check if dates might be reversed (start date after end date)
-            if start_date > end_date:
-                # Swap the dates for comparison, but don't modify the original data
-                temp = end_date
-                end_date = start_date
-                start_date = temp
-            
-            # Include event if the end date is in the future
-            if end_date.replace(tzinfo=None) >= current_date:
+    
+    if game_type.lower() == "genshin":
+        # Original Genshin Impact format processing
+        for event in events:
+            try:
+                # Try to parse both dates
+                start_date = parser.parse(event['start_date'])
+                end_date = parser.parse(event['end_date'])
+                
+                # Check if dates might be reversed (start date after end date)
+                if start_date > end_date:
+                    # Swap the dates for comparison, but don't modify the original data
+                    temp = end_date
+                    end_date = start_date
+                    start_date = temp
+                
+                # Include event if the end date is in the future
+                if end_date.replace(tzinfo=None) >= current_date:
+                    active_events.append(event)
+            except Exception as e:
+                # If we can't parse the date, include it just in case
+                print(f"Date parsing error for event '{event.get('name', 'Unknown')}': {e}")
                 active_events.append(event)
-        except Exception as e:
-            # If we can't parse the date, include it just in case
-            print(f"Date parsing error for event '{event.get('name', 'Unknown')}': {e}")
-            active_events.append(event)
+    else:
+        # Wuthering Waves new format processing
+        for event in events:
+            try:
+                # Extract start and end dates from the dates field
+                start_date_str, end_date_str = extract_dates_from_string(event['dates'])
+                
+                if end_date_str:
+                    end_date = parser.parse(end_date_str)
+                    # Include event if the end date is in the future
+                    if end_date.replace(tzinfo=None) >= current_date:
+                        # Add start_date and end_date for compatibility with existing code
+                        event_copy = event.copy()
+                        event_copy['start_date'] = start_date_str
+                        event_copy['end_date'] = end_date_str
+                        active_events.append(event_copy)
+                else:
+                    # If we can't parse the date properly, include it just in case
+                    active_events.append(event)
+            except Exception as e:
+                # If we can't parse the date, include it just in case
+                print(f"Date parsing error for event '{event.get('name', 'Unknown')}': {e}")
+                active_events.append(event)
     
     # Sort events by end date (closest ending first)
     try:
-        def safe_parse_date(date_str):
+        def safe_parse_date(event):
+            if game_type.lower() == "genshin":
+                date_str = event.get('end_date', '')
+            else:
+                # For Wuthering Waves, we have already added end_date to each event
+                date_str = event.get('end_date', event.get('dates', ''))
+            
             try:
                 return parser.parse(date_str)
             except:
                 # Return a far future date if parsing fails
                 return datetime.datetime(2099, 12, 31)
                 
-        active_events.sort(key=lambda x: safe_parse_date(x['end_date']))
+        active_events.sort(key=safe_parse_date)
     except Exception as e:
         print(f"Error sorting events: {e}")
         # If sorting fails, don't worry about it
@@ -95,30 +163,71 @@ def get_days_remaining(date_str):
         print(f"Error calculating days remaining: {e}")
         return None
 
-def format_rewards(reward_list):
+def format_rewards(reward_data):
     """Format the rewards for display in Discord embeds."""
-    if not reward_list:
+    if not reward_data:
         return "No reward information available"
     
-    # Sort rewards by putting Primogems and Mora first for Genshin, or Astrite first for Wuthering Waves
-    priority_items = ["Primogem", "Mora", "Astrite", "Shell Credit"]
-    formatted_rewards = []
-    
-    # First add priority items
-    for item in priority_items:
-        if item in reward_list:
+    if isinstance(reward_data, dict):
+        # Original Genshin Impact reward format (dictionary)
+        # Sort rewards by putting Primogems and Mora first for Genshin, or Astrite first for Wuthering Waves
+        priority_items = ["Primogem", "Mora", "Astrite", "Shell Credit"]
+        formatted_rewards = []
+        
+        # First add priority items
+        for item in priority_items:
+            if item in reward_data:
+                # Format large numbers with commas
+                quantity = f"{reward_data[item]:,}" if isinstance(reward_data[item], int) else reward_data[item]
+                formatted_rewards.append(f"**{item}**: {quantity}")
+        
+        # Then add other items alphabetically
+        other_items = sorted([item for item in reward_data.keys() if item not in priority_items])
+        for item in other_items:
             # Format large numbers with commas
-            quantity = f"{reward_list[item]:,}" if isinstance(reward_list[item], int) else reward_list[item]
+            quantity = f"{reward_data[item]:,}" if isinstance(reward_data[item], int) else reward_data[item]
             formatted_rewards.append(f"**{item}**: {quantity}")
+        
+        return "\n".join(formatted_rewards)
     
-    # Then add other items alphabetically
-    other_items = sorted([item for item in reward_list.keys() if item not in priority_items])
-    for item in other_items:
-        # Format large numbers with commas
-        quantity = f"{reward_list[item]:,}" if isinstance(reward_list[item], int) else reward_list[item]
-        formatted_rewards.append(f"**{item}**: {quantity}")
+    elif isinstance(reward_data, list):
+        # New Wuthering Waves reward format (list of strings)
+        # Convert list of "Item:Quantity" strings to dictionary first
+        reward_dict = {}
+        for reward_str in reward_data:
+            name, quantity = parse_reward_string(reward_str)
+            if name in reward_dict:
+                # If the item already exists, add to its quantity
+                if isinstance(reward_dict[name], int) and isinstance(quantity, int):
+                    reward_dict[name] += quantity
+                else:
+                    # If one of them is not an int, convert to string and concatenate
+                    reward_dict[name] = f"{reward_dict[name]}, {quantity}"
+            else:
+                reward_dict[name] = quantity
+        
+        # Sort rewards by priority
+        priority_items = ["Astrite", "Shell Credit", "Lustrous Tide", "Radiant Tide"]
+        formatted_rewards = []
+        
+        # First add priority items
+        for item in priority_items:
+            if item in reward_dict:
+                # Format large numbers with commas
+                quantity = f"{reward_dict[item]:,}" if isinstance(reward_dict[item], int) else reward_dict[item]
+                formatted_rewards.append(f"**{item}**: {quantity}")
+        
+        # Then add other items alphabetically
+        other_items = sorted([item for item in reward_dict.keys() if item not in priority_items])
+        for item in other_items:
+            # Format large numbers with commas
+            quantity = f"{reward_dict[item]:,}" if isinstance(reward_dict[item], int) else reward_dict[item]
+            formatted_rewards.append(f"**{item}**: {quantity}")
+        
+        return "\n".join(formatted_rewards)
     
-    return "\n".join(formatted_rewards)
+    # Fallback for unknown format
+    return str(reward_data)
 
 async def run_scraper(file_path):
     """
@@ -228,13 +337,18 @@ async def show_waves_events(interaction: discord.Interaction):
     current_embed = discord.Embed(
         title="Wuthering Waves Events",
         description="Current active events",
-        color=0x7289DA  # Different color for Wuthering Waves
+        color=0x9370DB  # Medium Purple color
     )
     
     field_count = 0
     
     for event in events:
-        days_left = get_days_remaining(event['end_date'])
+        # Get end date from either end_date field (added during processing) or extract from dates field
+        end_date = event.get('end_date', '')
+        if not end_date and 'dates' in event:
+            _, end_date = extract_dates_from_string(event['dates'])
+        
+        days_left = get_days_remaining(end_date) if end_date else None
         days_text = f"{days_left} days left" if days_left is not None else "Date unknown"
         
         if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
@@ -243,32 +357,42 @@ async def show_waves_events(interaction: discord.Interaction):
             name = event['name']
         
         # Base event information
-        value = (
-            f"**Type:** {event['type']}\n"
-            f"**Start Date:** {event['start_date']}\n"
-            f"**End Date:** {event['end_date']} ({days_text})\n"
-        )
+        value = f"**Version:** {event.get('version', 'N/A')}\n"
+        
+        # Add dates section
+        if 'start_date' in event and 'end_date' in event:
+            value += (
+                f"**Start Date:** {event['start_date']}\n"
+                f"**End Date:** {event['end_date']} ({days_text})\n"
+            )
+        else:
+            value += f"**Dates:** {event.get('dates', 'N/A')} ({days_text})\n"
         
         # Add rewards section if available
-        reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
-        if reward_key in event and event[reward_key]:
-            value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
+        if 'rewards' in event and event['rewards']:
+            value += f"\n**Rewards:**\n{format_rewards(event['rewards'])}\n"
         
-        value += f"\n[More Info]({event['link']})"
+        # Add link to more info
+        if 'link' in event and event['link']:
+            value += f"\n[More Info]({event['link']})"
         
         # Check if we need to create a new embed (25 fields limit)
         if field_count >= 25:
             embeds.append(current_embed)
             current_embed = discord.Embed(
                 title="Wuthering Waves Events (Continued)",
-                color=0x7289DA  # Different color for Wuthering Waves
+                description="Current active events",
+                color=0x9370DB
             )
             field_count = 0
         
+        # Add field to current embed
         current_embed.add_field(name=name, value=value, inline=False)
         field_count += 1
     
-    embeds.append(current_embed)
+    # Add the last embed if it has any fields
+    if field_count > 0:
+        embeds.append(current_embed)
     
     # Send all embeds
     for embed in embeds:
@@ -342,13 +466,18 @@ async def show_all_events(interaction: discord.Interaction):
         current_embed = discord.Embed(
             title="Wuthering Waves Events",
             description="Current active events",
-            color=0x7289DA
+            color=0x9370DB
         )
         
         field_count = 0
         
         for event in waves_events:
-            days_left = get_days_remaining(event['end_date'])
+            # Get end date from either end_date field (added during processing) or extract from dates field
+            end_date = event.get('end_date', '')
+            if not end_date and 'dates' in event:
+                _, end_date = extract_dates_from_string(event['dates'])
+            
+            days_left = get_days_remaining(end_date) if end_date else None
             days_text = f"{days_left} days left" if days_left is not None else "Date unknown"
             
             if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
@@ -357,22 +486,32 @@ async def show_all_events(interaction: discord.Interaction):
                 name = event['name']
             
             value = (
-                f"**Type:** {event['type']}\n"
-                f"**Start Date:** {event['start_date']}\n"
-                f"**End Date:** {event['end_date']} ({days_text})\n"
+                f"**Version:** {event.get('version', 'N/A')}\n"
             )
             
-            reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
-            if reward_key in event and event[reward_key]:
-                value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
+            # Add dates section
+            if 'start_date' in event and 'end_date' in event:
+                value += (
+                    f"**Start Date:** {event['start_date']}\n"
+                    f"**End Date:** {event['end_date']} ({days_text})\n"
+                )
+            else:
+                value += f"**Dates:** {event.get('dates', 'N/A')} ({days_text})\n"
             
-            value += f"\n[More Info]({event['link']})"
+            # Add rewards section if available
+            if 'rewards' in event and event['rewards']:
+                value += f"\n**Rewards:**\n{format_rewards(event['rewards'])}\n"
+            
+            # Add link to more info
+            if 'link' in event and event['link']:
+                value += f"\n[More Info]({event['link']})"
             
             if field_count >= 25:
                 embeds.append(current_embed)
                 current_embed = discord.Embed(
                     title="Wuthering Waves Events (Continued)",
-                    color=0x7289DA
+                    description="Current active events",
+                    color=0x9370DB
                 )
                 field_count = 0
             
@@ -447,7 +586,11 @@ async def test_alert(interaction: discord.Interaction, game_type: app_commands.C
         
         # For testing, consider all events as approaching deadline
         for event in events:
-            days_left = get_days_remaining(event['end_date'])
+            days_left = get_days_remaining(event['end_date']) if 'end_date' in event else None
+            if days_left is None and 'dates' in event:
+                _, end_date = extract_dates_from_string(event['dates'])
+                days_left = get_days_remaining(end_date)
+            
             approaching_deadlines.append((event, days_left if days_left is not None else 0))
         
         if approaching_deadlines:
@@ -458,7 +601,7 @@ async def test_alert(interaction: discord.Interaction, game_type: app_commands.C
                 # First send the role ping as a separate message for guaranteed notification
                 await test_channel.send(f"{role_mention}")
                 
-                color = 0x00AAFF if current_game == "genshin" else 0x7289DA
+                color = 0x00AAFF if current_game == "genshin" else 0x9370DB
                 
                 embed = discord.Embed(
                     title=f"⚠️ {game_name} Event Ending Soon: {event['name']} ⚠️",
@@ -467,16 +610,26 @@ async def test_alert(interaction: discord.Interaction, game_type: app_commands.C
                 )
                 
                 value = (
-                    f"**Type:** {event['type']}\n"
-                    f"**End Date:** {event['end_date']} "
-                    f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
+                    f"**Type:** {event.get('type', 'N/A')}\n"
                 )
+                
+                if 'start_date' in event and 'end_date' in event:
+                    value += (
+                        f"**Start Date:** {event['start_date']}\n"
+                        f"**End Date:** {event['end_date']} "
+                        f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
+                    )
+                else:
+                    value += (
+                        f"**Dates:** {event.get('dates', 'N/A')} "
+                        f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
+                    )
                 
                 reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
                 if reward_key in event and event[reward_key]:
                     value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
                     
-                value += f"\n[More Info]({event['link']})"
+                value += f"\n[More Info]({event.get('link', 'N/A')})"
                 
                 embed.add_field(name="Event Details", value=value, inline=False)
                 
@@ -487,31 +640,28 @@ async def test_alert(interaction: discord.Interaction, game_type: app_commands.C
             game_name = "Genshin Impact" if current_game == "genshin" else "Wuthering Waves"
             await interaction.followup.send(f"No {game_name} events found to display in the test alert.")
 
-@tree.command(name="refresh", description="Rerun the scrapers and reload the events data")
+@tree.command(name="refresh", description="Refresh events data by re-running the scrapers")
 async def refresh_events(interaction: discord.Interaction):
     """
     Rerun the scrapers and reload the events data for both games.
     """
     await interaction.response.defer()
-    await interaction.followup.send('Refreshing events data...')
     
-    # Run both scrapers asynchronously
-    success1 = await run_scraper('genshin_final.py')
-    success2 = await run_scraper('waves_fixed.py')
+    success_message = "Refreshing events data:\n"
     
-    if not success1 or not success2:
-        await interaction.followup.send('❌ Error occurred while running scrapers. Check logs for details.')
-        return
+    # Run Wuthering Waves scraper
+    waves_success = await run_scraper('waves_fixed.py')
+    success_message += "✅ " if waves_success else "❌ "
+    success_message += "Wuthering Waves scraper\n"
     
-    # Reload events for both games
-    genshin_events = load_events('genshin')
-    waves_events = load_events('waves')
+    # We could add more scrapers here if needed
     
-    if not genshin_events and not waves_events:
-        await interaction.followup.send('❌ No events found after refresh. Check scrapers.')
-        return
+    if waves_success:
+        success_message += "\nAll data has been refreshed! Use the `/waves` or `/all` commands to see the updated information."
+    else:
+        success_message += "\nThere were issues refreshing some data. The information may be outdated."
     
-    await interaction.followup.send('✅ Events data refreshed successfully!')
+    await interaction.followup.send(success_message)
 
 @tree.command(name="help", description="Display help information about the bot commands")
 async def help_events(interaction: discord.Interaction):
@@ -575,60 +725,80 @@ async def help_events(interaction: discord.Interaction):
 @tasks.loop(hours=CHECK_INTERVAL_HOURS)
 async def check_deadlines():
     """Periodic task to check for approaching deadlines and send alerts."""
-    if NOTIFICATION_CHANNEL_ID is None:
+    if not NOTIFICATION_CHANNEL_ID:
         return
     
-    # Check both games for deadlines
-    for game_type in ["genshin", "waves"]:
-        events = get_formatted_events(game_type)
-        approaching_deadlines = []
+    channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
+    if not channel:
+        print(f"Warning: Could not find notification channel with ID {NOTIFICATION_CHANNEL_ID}")
+        return
+    
+    # Load events from both games
+    genshin_events = get_formatted_events("genshin")
+    waves_events = get_formatted_events("waves")
+    
+    # Find events that are ending soon
+    ending_soon = []
+    
+    for event in genshin_events:
+        days_left = get_days_remaining(event['end_date'])
+        if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
+            ending_soon.append((event, "genshin", days_left))
+    
+    for event in waves_events:
+        # For Wuthering Waves, use either end_date or extract from dates
+        end_date = event.get('end_date', '')
+        if not end_date and 'dates' in event:
+            _, end_date = extract_dates_from_string(event['dates'])
         
-        for event in events:
-            days_left = get_days_remaining(event['end_date'])
-            if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
-                approaching_deadlines.append((event, days_left))
+        days_left = get_days_remaining(end_date) if end_date else None
+        if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
+            ending_soon.append((event, "waves", days_left))
+    
+    if not ending_soon:
+        return
+    
+    # Find the role to ping
+    role_to_ping = None
+    if NOTIFICATION_ROLE_NAME and channel.guild:
+        role_to_ping = discord.utils.get(channel.guild.roles, name=NOTIFICATION_ROLE_NAME)
+    
+    # Create an embed for the alerts
+    embed = discord.Embed(
+        title="🚨 Event Deadline Alert 🚨",
+        description=f"The following events are ending soon! {'Only ' + str(ALERT_DAYS_THRESHOLD) + ' days or less remaining!' if ALERT_DAYS_THRESHOLD > 0 else ''}",
+        color=0xFF0000  # Red
+    )
+    
+    for event, game_type, days_left in ending_soon:
+        game_prefix = "🎮 GI" if game_type == "genshin" else "🌊 WW"
+        name = f"{game_prefix} | {event['name']}"
         
-        if approaching_deadlines and NOTIFICATION_CHANNEL_ID:
-            channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
-            if channel:
-                guild = channel.guild
-                role = discord.utils.get(guild.roles, name=NOTIFICATION_ROLE_NAME)
-                
-                if not role:
-                    print(f"Warning: Role '{NOTIFICATION_ROLE_NAME}' not found in server '{guild.name}'")
-                    role_mention = f"@{NOTIFICATION_ROLE_NAME}"
-                else:
-                    # Use direct role ID for proper pinging
-                    role_mention = f"<@&{role.id}>"
-                
-                game_name = "Genshin Impact" if game_type == "genshin" else "Wuthering Waves"
-                color = 0x00AAFF if game_type == "genshin" else 0x7289DA
-                
-                for event, days_left in approaching_deadlines:
-                    # Send the role ping separately for guaranteed notification
-                    await channel.send(f"{role_mention}")
-                    
-                    embed = discord.Embed(
-                        title=f"⚠️ {game_name} Event Ending Soon: {event['name']} ⚠️",
-                        description="This event deadline is approaching!",
-                        color=color
-                    )
-                    
-                    value = (
-                        f"**Type:** {event['type']}\n"
-                        f"**End Date:** {event['end_date']} "
-                        f"({'today' if days_left == 0 else f'in {days_left} days'})\n"
-                    )
-                    
-                    reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
-                    if reward_key in event and event[reward_key]:
-                        value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
-                        
-                    value += f"\n[More Info]({event['link']})"
-                    
-                    embed.add_field(name="Event Details", value=value, inline=False)
-                    
-                    await channel.send(embed=embed)
+        if days_left == 0:
+            value = "**ENDING TODAY!**\n"
+        elif days_left == 1:
+            value = "**ENDING TOMORROW!**\n"
+        else:
+            value = f"**{days_left} days remaining**\n"
+        
+        # Add dates
+        if game_type == "genshin":
+            value += f"End Date: {event['end_date']}\n"
+        else:
+            if 'end_date' in event:
+                value += f"End Date: {event['end_date']}\n"
+            else:
+                value += f"Dates: {event.get('dates', 'N/A')}\n"
+        
+        # Add link if available
+        if 'link' in event and event['link']:
+            value += f"[More Info]({event['link']})"
+        
+        embed.add_field(name=name, value=value, inline=False)
+    
+    # Send the alert
+    content = role_to_ping.mention if role_to_ping else None
+    await channel.send(content=content, embed=embed)
 
 @check_deadlines.before_loop
 async def before_check_deadlines():
