@@ -25,7 +25,7 @@ bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
 # Path to the events JSON files
-GENSHIN_EVENTS_FILE = 'genshin_combined.json'
+GENSHIN_EVENTS_FILE = 'genshin_impact_current_events.json'
 WAVES_EVENTS_FILE = 'wuthering_waves_current_events.json'
 
 def load_events(game_type="genshin"):
@@ -83,60 +83,33 @@ def get_formatted_events(game_type="genshin"):
     # Filter out events that have already ended
     active_events = []
     
-    if game_type.lower() == "genshin":
-        # Original Genshin Impact format processing
-        for event in events:
-            try:
-                # Try to parse both dates
-                start_date = parser.parse(event['start_date'])
-                end_date = parser.parse(event['end_date'])
-                
-                # Check if dates might be reversed (start date after end date)
-                if start_date > end_date:
-                    # Swap the dates for comparison, but don't modify the original data
-                    temp = end_date
-                    end_date = start_date
-                    start_date = temp
-                
+    # Both Genshin and Wuthering Waves now use the same format
+    for event in events:
+        try:
+            # Extract start and end dates from the dates field
+            start_date_str, end_date_str = extract_dates_from_string(event['dates'])
+            
+            if end_date_str:
+                end_date = parser.parse(end_date_str)
                 # Include event if the end date is in the future
                 if end_date.replace(tzinfo=None) >= current_date:
-                    active_events.append(event)
-            except Exception as e:
-                # If we can't parse the date, include it just in case
-                print(f"Date parsing error for event '{event.get('name', 'Unknown')}': {e}")
+                    # Add start_date and end_date for compatibility with existing code
+                    event_copy = event.copy()
+                    event_copy['start_date'] = start_date_str
+                    event_copy['end_date'] = end_date_str
+                    active_events.append(event_copy)
+            else:
+                # If we can't parse the date properly, include it just in case
                 active_events.append(event)
-    else:
-        # Wuthering Waves new format processing
-        for event in events:
-            try:
-                # Extract start and end dates from the dates field
-                start_date_str, end_date_str = extract_dates_from_string(event['dates'])
-                
-                if end_date_str:
-                    end_date = parser.parse(end_date_str)
-                    # Include event if the end date is in the future
-                    if end_date.replace(tzinfo=None) >= current_date:
-                        # Add start_date and end_date for compatibility with existing code
-                        event_copy = event.copy()
-                        event_copy['start_date'] = start_date_str
-                        event_copy['end_date'] = end_date_str
-                        active_events.append(event_copy)
-                else:
-                    # If we can't parse the date properly, include it just in case
-                    active_events.append(event)
-            except Exception as e:
-                # If we can't parse the date, include it just in case
-                print(f"Date parsing error for event '{event.get('name', 'Unknown')}': {e}")
-                active_events.append(event)
+        except Exception as e:
+            # If we can't parse the date, include it just in case
+            print(f"Date parsing error for event '{event.get('name', 'Unknown')}': {e}")
+            active_events.append(event)
     
     # Sort events by end date (closest ending first)
     try:
         def safe_parse_date(event):
-            if game_type.lower() == "genshin":
-                date_str = event.get('end_date', '')
-            else:
-                # For Wuthering Waves, we have already added end_date to each event
-                date_str = event.get('end_date', event.get('dates', ''))
+            date_str = event.get('end_date', event.get('dates', ''))
             
             try:
                 return parser.parse(date_str)
@@ -282,7 +255,12 @@ async def show_genshin_events(interaction: discord.Interaction):
     field_count = 0
     
     for event in events:
-        days_left = get_days_remaining(event['end_date'])
+        # Get end date from either end_date field (added during processing) or extract from dates field
+        end_date = event.get('end_date', '')
+        if not end_date and 'dates' in event:
+            _, end_date = extract_dates_from_string(event['dates'])
+        
+        days_left = get_days_remaining(end_date) if end_date else None
         days_text = f"{days_left} days left" if days_left is not None else "Date unknown"
         
         if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
@@ -291,32 +269,42 @@ async def show_genshin_events(interaction: discord.Interaction):
             name = event['name']
         
         # Base event information
-        value = (
-            f"**Type:** {event['type']}\n"
-            f"**Start Date:** {event['start_date']}\n"
-            f"**End Date:** {event['end_date']} ({days_text})\n"
-        )
+        value = f"**Version:** {event.get('version', 'N/A')}\n"
+        
+        # Add dates section
+        if 'start_date' in event and 'end_date' in event:
+            value += (
+                f"**Start Date:** {event['start_date']}\n"
+                f"**End Date:** {event['end_date']} ({days_text})\n"
+            )
+        else:
+            value += f"**Dates:** {event.get('dates', 'N/A')} ({days_text})\n"
         
         # Add rewards section if available
-        reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
-        if reward_key in event and event[reward_key]:
-            value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
+        if 'rewards' in event and event['rewards']:
+            value += f"\n**Rewards:**\n{format_rewards(event['rewards'])}\n"
         
-        value += f"\n[More Info]({event['link']})"
+        # Add link to more info
+        if 'link' in event and event['link']:
+            value += f"\n[More Info]({event['link']})"
         
         # Check if we need to create a new embed (25 fields limit)
         if field_count >= 25:
             embeds.append(current_embed)
             current_embed = discord.Embed(
                 title="Genshin Impact Events (Continued)",
+                description="Current active events",
                 color=0x00AAFF
             )
             field_count = 0
         
+        # Add field to current embed
         current_embed.add_field(name=name, value=value, inline=False)
         field_count += 1
     
-    embeds.append(current_embed)
+    # Add the last embed if it has any fields
+    if field_count > 0:
+        embeds.append(current_embed)
     
     # Send all embeds
     for embed in embeds:
@@ -402,15 +390,18 @@ async def show_waves_events(interaction: discord.Interaction):
 async def show_all_events(interaction: discord.Interaction):
     """Command to display both Genshin Impact and Wuthering Waves events."""
     await interaction.response.defer()
-    await interaction.followup.send("Showing events for both games. Use `/genshin` or `/waves` for specific game events.")
     
-    # Display Genshin events
     genshin_events = get_formatted_events("genshin")
-    if not genshin_events:
-        await interaction.followup.send("No active Genshin Impact events found.")
-    else:
-        # Create embeds for events
-        embeds = []
+    waves_events = get_formatted_events("waves")
+    
+    if not genshin_events and not waves_events:
+        await interaction.followup.send("No active events found for either game.")
+        return
+    
+    embeds = []
+    
+    # Genshin Impact section first
+    if genshin_events:
         current_embed = discord.Embed(
             title="Genshin Impact Events",
             description="Current active events",
@@ -420,7 +411,12 @@ async def show_all_events(interaction: discord.Interaction):
         field_count = 0
         
         for event in genshin_events:
-            days_left = get_days_remaining(event['end_date'])
+            # Get end date from either end_date field (added during processing) or extract from dates field
+            end_date = event.get('end_date', '')
+            if not end_date and 'dates' in event:
+                _, end_date = extract_dates_from_string(event['dates'])
+            
+            days_left = get_days_remaining(end_date) if end_date else None
             days_text = f"{days_left} days left" if days_left is not None else "Date unknown"
             
             if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
@@ -429,21 +425,31 @@ async def show_all_events(interaction: discord.Interaction):
                 name = event['name']
             
             value = (
-                f"**Type:** {event['type']}\n"
-                f"**Start Date:** {event['start_date']}\n"
-                f"**End Date:** {event['end_date']} ({days_text})\n"
+                f"**Version:** {event.get('version', 'N/A')}\n"
             )
             
-            reward_key = 'reward_list' if 'reward_list' in event else 'rewards'
-            if reward_key in event and event[reward_key]:
-                value += f"\n**Rewards:**\n{format_rewards(event[reward_key])}\n"
+            # Add dates section
+            if 'start_date' in event and 'end_date' in event:
+                value += (
+                    f"**Start Date:** {event['start_date']}\n"
+                    f"**End Date:** {event['end_date']} ({days_text})\n"
+                )
+            else:
+                value += f"**Dates:** {event.get('dates', 'N/A')} ({days_text})\n"
             
-            value += f"\n[More Info]({event['link']})"
+            # Add rewards section if available
+            if 'rewards' in event and event['rewards']:
+                value += f"\n**Rewards:**\n{format_rewards(event['rewards'])}\n"
+            
+            # Add link to more info
+            if 'link' in event and event['link']:
+                value += f"\n[More Info]({event['link']})"
             
             if field_count >= 25:
                 embeds.append(current_embed)
                 current_embed = discord.Embed(
                     title="Genshin Impact Events (Continued)",
+                    description="Current active events",
                     color=0x00AAFF
                 )
                 field_count = 0
@@ -451,18 +457,11 @@ async def show_all_events(interaction: discord.Interaction):
             current_embed.add_field(name=name, value=value, inline=False)
             field_count += 1
         
-        embeds.append(current_embed)
-        
-        for embed in embeds:
-            await interaction.followup.send(embed=embed)
+        if field_count > 0:
+            embeds.append(current_embed)
     
-    # Display Wuthering Waves events
-    waves_events = get_formatted_events("waves")
-    if not waves_events:
-        await interaction.followup.send("No active Wuthering Waves events found.")
-    else:
-        # Create embeds for events
-        embeds = []
+    # Then Wuthering Waves section
+    if waves_events:
         current_embed = discord.Embed(
             title="Wuthering Waves Events",
             description="Current active events",
@@ -518,10 +517,12 @@ async def show_all_events(interaction: discord.Interaction):
             current_embed.add_field(name=name, value=value, inline=False)
             field_count += 1
         
-        embeds.append(current_embed)
-        
-        for embed in embeds:
-            await interaction.followup.send(embed=embed)
+        if field_count > 0:
+            embeds.append(current_embed)
+    
+    # Send all embeds
+    for embed in embeds:
+        await interaction.followup.send(embed=embed)
 
 @tree.command(name="set_alert_channel", description="Set the current channel as the notification channel")
 @app_commands.default_permissions(administrator=True)
@@ -649,15 +650,18 @@ async def refresh_events(interaction: discord.Interaction):
     
     success_message = "Refreshing events data:\n"
     
+    # Run Genshin Impact scraper
+    genshin_success = await run_scraper('genshin_fixed.py')
+    success_message += "✅ " if genshin_success else "❌ "
+    success_message += "Genshin Impact scraper\n"
+    
     # Run Wuthering Waves scraper
     waves_success = await run_scraper('waves_fixed.py')
     success_message += "✅ " if waves_success else "❌ "
     success_message += "Wuthering Waves scraper\n"
     
-    # We could add more scrapers here if needed
-    
-    if waves_success:
-        success_message += "\nAll data has been refreshed! Use the `/waves` or `/all` commands to see the updated information."
+    if genshin_success and waves_success:
+        success_message += "\nAll data has been refreshed! Use the `/genshin`, `/waves`, or `/all` commands to see the updated information."
     else:
         success_message += "\nThere were issues refreshing some data. The information may be outdated."
     
@@ -741,7 +745,12 @@ async def check_deadlines():
     ending_soon = []
     
     for event in genshin_events:
-        days_left = get_days_remaining(event['end_date'])
+        # For Genshin, use either end_date or extract from dates
+        end_date = event.get('end_date', '')
+        if not end_date and 'dates' in event:
+            _, end_date = extract_dates_from_string(event['dates'])
+        
+        days_left = get_days_remaining(end_date) if end_date else None
         if days_left is not None and days_left <= ALERT_DAYS_THRESHOLD:
             ending_soon.append((event, "genshin", days_left))
     
